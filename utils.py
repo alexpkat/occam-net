@@ -1,22 +1,24 @@
-from sympy import *
+from sympy import Matrix, symbols, simplify
 import torch.nn as nn
 from inspect import signature
 import torch.nn.functional as F
 import torch
-from bases import *
+
+from bases import LATEX_CONSTANTS, SYMPY_BASES
+
+
+def argmax_matrix(M):
+    argmaxes = torch.argmax(M, dim=1).unsqueeze(-1)
+    matrix = torch.zeros_like(M)
+    for i, argmax in enumerate(argmaxes):
+        matrix[i, argmax] = 1
+    return matrix
+
 
 
 def get_model_equation(model, arg_max=True):
-    def argmax_matrix(M):
-        argmaxes = torch.argmax(M, dim=1).unsqueeze(-1)
-        matrix = torch.zeros_like(M)
-        for i, argmax in enumerate(argmaxes):
-            matrix[i, argmax] = 1
-        return matrix
-
     inputs = symbols(['x_' + str(i) for i in range(model.number_of_variables)])
     constants = symbols([LATEX_CONSTANTS[constant][1:][:-1] for constant in model.constants])
-    outputs = symbols(['y_' + str(i) for i in range(model.number_of_outputs)])
 
     bases = [SYMPY_BASES[base] for base in model.bases]
 
@@ -27,7 +29,6 @@ def get_model_equation(model, arg_max=True):
     source = layers[0]
     source_w = source.weight.detach()
 
-    number_of_inputs = source_w.shape[1]
     input_variables = Matrix(inputs + constants)
 
     source_w = F.softmax((1.0 / model.temperature) * source_w, dim=1)

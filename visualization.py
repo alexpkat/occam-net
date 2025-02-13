@@ -119,7 +119,8 @@ def draw_model_network(ax1, model, traceback, cascadeback, routing_map, skip_con
         argument_index = 0
         images = []
         for i, (f, arity) in enumerate(model.torch_bases):
-            image = {'id': id, 'label': sp.latex(latex_bases[i])}
+            # image = {'id': id, 'label': sp.latex(latex_bases[i])}
+            image = {'id': id, 'label': latex_bases[i]}
             images.append(image)
             for v in arguments[argument_index: argument_index + arity]:
                 edge = {'v': v['id'], 'u': id, 'w': 1}
