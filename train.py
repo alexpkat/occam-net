@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils import data
 import matplotlib.pyplot as plt
-from alive_progress import alive_bar
+from tqdm import tqdm
 from utils import get_model_equation
 from torch.distributions import Categorical
 import torch.nn.functional as F
@@ -70,70 +70,69 @@ def train(model, dataset=None, epochs=1000, learning_rate=0.001, regularization=
         elif variance_evolution == "decay":
             get_variances = lambda epoch: Vscale_high - (Vscale_high - Vscale_low) * epoch / epochs
 
-    with alive_bar(epochs, length=bar_length) as bar:
-        for epoch in range(epochs):
-            model.set_temperature(get_T(epoch))
-            bar()
+    bar = tqdm(range(epochs))
+    for epoch in bar:
+        model.set_temperature(get_T(epoch))
 
-            epoch_G = []
+        epoch_G = []
 
-            for batch_x, batch_y, batch_variance in dataset:
-                output, probabilities, hidden = model.forward_routing_with_skip_connections(batch_x)
+        for batch_x, batch_y, batch_variance in dataset:
+            output, probabilities, hidden = model.forward_routing_with_skip_connections(batch_x)
 
-                if variance_evolution == 'batch':
-                    var = batch_variance
-                else:
-                    var = get_variances(epoch)
-
-
-                target_distribution = torch.distributions.Normal(batch_y, var)
-                if recurrence_search and model.recurrence_depth > 1:
-                    best_hidden, best_index = -float('inf'), -1
-                    for (h, hidden_output) in enumerate(hidden):
-                        p_x = torch.exp(target_distribution.log_prob(hidden_output))
-                        G = p_x.sum(dim=0)
-                        if torch.max(G) > best_hidden:
-                            best_index = h
-                            best_hidden = torch.max(G)
-                    output = hidden[best_index]
-
-                p_x = torch.exp(target_distribution.log_prob(output.detach()))
-
-                G = p_x.sum(dim=1)
-                all_indices = [torch.argsort(G[:, g], dim=-1) for g in range(G.shape[1])]
-                best_G = [G[:, i][indices][-truncation_parameter:] for i, indices in enumerate(all_indices)]
-
-                log_q_x = torch.log(probabilities + EPS)
-                weighting = torch.tensor([1/(n) for n in range(truncation_parameter, 0, -1)])
-                best_log_q_x = [log_q_x[:, i][indices][-truncation_parameter:] * weighting for i, indices in enumerate(all_indices)]
-
-                all_log = torch.cat(best_log_q_x)
-                all_G = torch.cat(best_G)
-
-                H = -torch.dot(all_G, all_log)
-
-                optimizer.zero_grad()
-                H.backward()
-                optimizer.step()
-
-                epoch_G.append(float(torch.mean(all_G).data.cpu().numpy()))
+            if variance_evolution == 'batch':
+                var = batch_variance
+            else:
+                var = get_variances(epoch)
 
 
-            losses.append([epoch, np.mean(epoch_G)])
+            target_distribution = torch.distributions.Normal(batch_y, var)
+            if recurrence_search and model.recurrence_depth > 1:
+                best_hidden, best_index = -float('inf'), -1
+                for (h, hidden_output) in enumerate(hidden):
+                    p_x = torch.exp(target_distribution.log_prob(hidden_output))
+                    G = p_x.sum(dim=0)
+                    if torch.max(G) > best_hidden:
+                        best_index = h
+                        best_hidden = torch.max(G)
+                output = hidden[best_index]
 
-            if video_saver is not None and epoch % recording_rate == 0:
-                model.visualize(video_saver=video_saver, cascadeback=True, viz_type=visualization, epoch=epoch,
-                        sample_x=x, sample_y=y, skip_connections=skip_connections, losses=losses)
+            p_x = torch.exp(target_distribution.log_prob(output.detach()))
 
-            if epoch % 10 == 0:
-                print(np.mean(epoch_G))
+            G = p_x.sum(dim=1)
+            all_indices = [torch.argsort(G[:, g], dim=-1) for g in range(G.shape[1])]
+            best_G = [G[:, i][indices][-truncation_parameter:] for i, indices in enumerate(all_indices)]
 
-            if logging_interval is not None and epoch % logging_interval == 0:
-                np.save('losses/' + 'loss_' + str(trial), np.array(losses))
-                torch.save(model.state_dict(), "models/model" + str(trial))
+            log_q_x = torch.log(probabilities + EPS)
+            weighting = torch.tensor([1/(n) for n in range(truncation_parameter, 0, -1)])
+            best_log_q_x = [log_q_x[:, i][indices][-truncation_parameter:] * weighting for i, indices in enumerate(all_indices)]
 
-        if logging_interval is not None:
-            np.save('losses' + 'loss_' + str(trial), np.array(losses))
+            all_log = torch.cat(best_log_q_x)
+            all_G = torch.cat(best_G)
+
+            H = -torch.dot(all_G, all_log)
+
+            optimizer.zero_grad()
+            H.backward()
+            optimizer.step()
+
+            epoch_G.append(float(torch.mean(all_G).data.cpu().numpy()))
+
+
+        losses.append([epoch, np.mean(epoch_G)])
+
+        if video_saver is not None and epoch % recording_rate == 0:
+            model.visualize(video_saver=video_saver, cascadeback=True, viz_type=visualization, epoch=epoch,
+                    sample_x=x, sample_y=y, skip_connections=skip_connections, losses=losses)
+
+        if epoch % 10 == 0:
+            bar.set_postfix({"score": f"{np.mean(epoch_G):.2f}"})
+
+        if logging_interval is not None and epoch % logging_interval == 0:
+            np.save('losses/' + 'loss_' + str(trial), np.array(losses))
             torch.save(model.state_dict(), "models/model" + str(trial))
+
+    if logging_interval is not None:
+        np.save('losses' + 'loss_' + str(trial), np.array(losses))
+        torch.save(model.state_dict(), "models/model" + str(trial))
 
     return losses
